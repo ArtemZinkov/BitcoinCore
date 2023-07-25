@@ -48,13 +48,25 @@ open class AbstractKit {
     public func send(to hash: Data, scriptType: ScriptType, value: Int, feeRate: Int, sortType: TransactionDataSortType) throws -> FullTransaction {
         try bitcoinCore.send(to: hash, scriptType: scriptType, value: value, feeRate: feeRate, sortType: sortType)
     }
+    
+    public func send(transaction: FullTransaction) throws {
+        try bitcoinCore.processAndSend(transaction: transaction)
+    }
+
+    open func createTransaction(to address: String, value: Int, feeRate: Int, sortType: TransactionDataSortType, pluginData: [UInt8: IPluginData] = [:]) throws -> FullTransaction {
+        try bitcoinCore.createTransaction(to: address, value: value, feeRate: feeRate, sortType: sortType, pluginData: pluginData)
+    }
+
+    public func createTransaction(to hash: Data, scriptType: ScriptType, value: Int, feeRate: Int, sortType: TransactionDataSortType) throws -> FullTransaction {
+        try bitcoinCore.createTransaction(to: hash, scriptType: scriptType, value: value, feeRate: feeRate, sortType: sortType)
+    }
 
     public func redeem(from unspentOutput: UnspentOutput, to address: String, feeRate: Int, sortType: TransactionDataSortType) throws -> FullTransaction {
         try bitcoinCore.redeem(from: unspentOutput, to: address, feeRate: feeRate, sortType: sortType)
     }
 
     open func createRawTransaction(to address: String, value: Int, feeRate: Int, sortType: TransactionDataSortType, pluginData: [UInt8: IPluginData] = [:]) throws -> Data {
-        try bitcoinCore.createRawTransaction(to: address, value: value, feeRate: feeRate, sortType: sortType, pluginData: pluginData)
+        try bitcoinCore.createRawTransaction(to: address, value: value, feeRate: feeRate, sortType: sortType, pluginData: pluginData, forceSign: false)
     }
 
     open func validate(address: String, pluginData: [UInt8: IPluginData] = [:]) throws {

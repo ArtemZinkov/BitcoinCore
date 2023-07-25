@@ -12,10 +12,14 @@ public class BitcoinCore {
     private let restoreKeyConverterChain: RestoreKeyConverterChain
     private let unspentOutputSelector: UnspentOutputSelectorChain
 
-    private let transactionCreator: ITransactionCreator?
-    private let transactionFeeCalculator: ITransactionFeeCalculator?
-    private let dustCalculator: IDustCalculator?
+    private let transactionCreator: ITransactionCreator
+    private let transactionFeeCalculator: ITransactionFeeCalculator
+    private let dustCalculator: IDustCalculator
     private let paymentAddressParser: IPaymentAddressParser
+
+    private let transactionSender: ITransactionSender
+    private let transactionProcessor: IPendingTransactionProcessor
+    private let bloomFilterManager: IBloomFilterManager
 
     private let networkMessageSerializer: NetworkMessageSerializer
     private let networkMessageParser: NetworkMessageParser
@@ -31,6 +35,7 @@ public class BitcoinCore {
     public let peerGroup: IPeerGroup
     public let initialBlockDownload: IInitialBlockDownload
     public let transactionSyncer: ITransactionSyncer
+    public let watchAccount: Bool
 
     let bloomFilterLoader: BloomFilterLoader
     let inventoryItemsHandlerChain = InventoryItemsHandlerChain()
@@ -83,10 +88,12 @@ public class BitcoinCore {
          peerGroup: IPeerGroup, initialBlockDownload: IInitialBlockDownload, bloomFilterLoader: BloomFilterLoader, transactionSyncer: ITransactionSyncer,
          publicKeyManager: IPublicKeyManager, addressConverter: AddressConverterChain, restoreKeyConverterChain: RestoreKeyConverterChain,
          unspentOutputSelector: UnspentOutputSelectorChain,
-         transactionCreator: ITransactionCreator?, transactionFeeCalculator: ITransactionFeeCalculator?, dustCalculator: IDustCalculator?,
+         transactionCreator: ITransactionCreator, transactionFeeCalculator: ITransactionFeeCalculator, dustCalculator: IDustCalculator,
+         transactionSender: ITransactionSender, transactionProcessor: IPendingTransactionProcessor, bloomFilterManager: IBloomFilterManager,
          paymentAddressParser: IPaymentAddressParser, networkMessageParser: NetworkMessageParser, networkMessageSerializer: NetworkMessageSerializer,
          syncManager: SyncManager, pluginManager: IPluginManager, watchedTransactionManager: IWatchedTransactionManager, purpose: Purpose,
-         peerManager: IPeerManager) {
+         peerManager: IPeerManager,
+         watchAccount: Bool) {
         self.storage = storage
         self.dataProvider = dataProvider
         self.peerGroup = peerGroup
@@ -101,6 +108,10 @@ public class BitcoinCore {
         self.transactionFeeCalculator = transactionFeeCalculator
         self.dustCalculator = dustCalculator
         self.paymentAddressParser = paymentAddressParser
+        
+        self.transactionSender = transactionSender
+        self.transactionProcessor = transactionProcessor
+        self.bloomFilterManager = bloomFilterManager
 
         self.networkMessageParser = networkMessageParser
         self.networkMessageSerializer = networkMessageSerializer
@@ -111,6 +122,8 @@ public class BitcoinCore {
 
         self.purpose = purpose
         self.peerManager = peerManager
+        
+        self.watchAccount = watchAccount
     }
 
 }
@@ -128,10 +141,6 @@ extension BitcoinCore {
 }
 
 extension BitcoinCore {
-
-    public var watchAccount: Bool { //todo: What is better way to determine watch?
-        transactionCreator == nil
-    }
 
     public var lastBlockInfo: BlockInfo? {
         dataProvider.lastBlockInfo
@@ -153,37 +162,49 @@ extension BitcoinCore {
         dataProvider.transaction(hash: hash)
     }
 
-    public func send(to address: String, value: Int, feeRate: Int, sortType: TransactionDataSortType, pluginData: [UInt8: IPluginData] = [:]) throws -> FullTransaction {
-        guard let transactionCreator = transactionCreator else {
-            throw CoreError.readOnlyCore
+    public func processAndSend(transaction: FullTransaction) throws {
+        try transactionSender.verifyCanSend()
+
+        do {
+            try transactionProcessor.processCreated(transaction: transaction)
+        } catch _ as BloomFilterManager.BloomFilterExpired {
+            bloomFilterManager.regenerateBloomFilter()
         }
 
-        return try transactionCreator.create(to: address, value: value, feeRate: feeRate, senderPay: true, sortType: sortType, pluginData: pluginData)
+        transactionSender.send(pendingTransaction: transaction)
+    }
+
+    public func send(to address: String, value: Int, feeRate: Int, sortType: TransactionDataSortType, pluginData: [UInt8: IPluginData] = [:]) throws -> FullTransaction {
+        let transaction = try transactionCreator.create(to: address, value: value, feeRate: feeRate, senderPay: true, sortType: sortType, pluginData: pluginData, forceSign: true)
+        try processAndSend(transaction: transaction)
+        return transaction
     }
 
     public func send(to hash: Data, scriptType: ScriptType, value: Int, feeRate: Int, sortType: TransactionDataSortType) throws -> FullTransaction {
-        guard let transactionCreator = transactionCreator else {
-            throw CoreError.readOnlyCore
-        }
-
         let toAddress = try addressConverter.convert(lockingScriptPayload: hash, type: scriptType)
-        return try transactionCreator.create(to: toAddress.stringValue, value: value, feeRate: feeRate, senderPay: true, sortType: sortType, pluginData: [:])
+        let transaction = try transactionCreator.create(to: toAddress.stringValue, value: value, feeRate: feeRate, senderPay: true, sortType: sortType, pluginData: [:], forceSign: true)
+        try processAndSend(transaction: transaction)
+        return transaction
     }
 
     func redeem(from unspentOutput: UnspentOutput, to address: String, feeRate: Int, sortType: TransactionDataSortType) throws -> FullTransaction {
-        guard let transactionCreator = transactionCreator else {
-            throw CoreError.readOnlyCore
-        }
-
-        return try transactionCreator.create(from: unspentOutput, to: address, feeRate: feeRate, sortType: sortType)
+        let transaction = try transactionCreator.create(from: unspentOutput, to: address, feeRate: feeRate, sortType: sortType, forceSign: true)
+        
+        try processAndSend(transaction: transaction)
+        return transaction
     }
 
-    public func createRawTransaction(to address: String, value: Int, feeRate: Int, sortType: TransactionDataSortType, pluginData: [UInt8: IPluginData] = [:]) throws -> Data {
-        guard let transactionCreator = transactionCreator else {
-            throw CoreError.readOnlyCore
-        }
+    public func createTransaction(to address: String, value: Int, feeRate: Int, sortType: TransactionDataSortType, pluginData: [UInt8: IPluginData] = [:]) throws -> FullTransaction {
+        return try transactionCreator.create(to: address, value: value, feeRate: feeRate, senderPay: true, sortType: sortType, pluginData: pluginData, forceSign: false)
+    }
 
-        return try transactionCreator.createRawTransaction(to: address, value: value, feeRate: feeRate, senderPay: true, sortType: sortType, pluginData: pluginData)
+    public func createTransaction(to hash: Data, scriptType: ScriptType, value: Int, feeRate: Int, sortType: TransactionDataSortType) throws -> FullTransaction {
+        let toAddress = try addressConverter.convert(lockingScriptPayload: hash, type: scriptType)
+        return try transactionCreator.create(to: toAddress.stringValue, value: value, feeRate: feeRate, senderPay: true, sortType: sortType, pluginData: [:], forceSign: false)
+    }
+
+    public func createRawTransaction(to address: String, value: Int, feeRate: Int, sortType: TransactionDataSortType, pluginData: [UInt8: IPluginData] = [:], forceSign: Bool) throws -> Data {
+        return try transactionCreator.createRawTransaction(to: address, value: value, feeRate: feeRate, senderPay: true, sortType: sortType, pluginData: pluginData, forceSign: forceSign)
     }
 
     public func validate(address: String, pluginData: [UInt8: IPluginData] = [:]) throws {
@@ -195,27 +216,15 @@ extension BitcoinCore {
     }
 
     public func fee(for value: Int, toAddress: String? = nil, feeRate: Int, pluginData: [UInt8: IPluginData] = [:]) throws -> Int {
-        guard let transactionFeeCalculator = transactionFeeCalculator else {
-            throw CoreError.readOnlyCore
-        }
-
         return try transactionFeeCalculator.fee(for: value, feeRate: feeRate, senderPay: true, toAddress: toAddress, pluginData: pluginData)
     }
 
     public func maxSpendableValue(toAddress: String? = nil, feeRate: Int, pluginData: [UInt8: IPluginData] = [:]) throws -> Int {
-        guard let transactionFeeCalculator = transactionFeeCalculator else {
-            throw CoreError.readOnlyCore
-        }
-
         let sendAllFee = try transactionFeeCalculator.fee(for: balance.spendable, feeRate: feeRate, senderPay: false, toAddress: toAddress, pluginData: pluginData)
         return max(0, balance.spendable - sendAllFee)
     }
 
     public func minSpendableValue(toAddress: String? = nil) throws -> Int {
-        guard let dustCalculator = dustCalculator else {
-            throw CoreError.readOnlyCore
-        }
-
         var scriptType = ScriptType.p2pkh
         if let addressStr = toAddress, let address = try? addressConverter.convert(address: addressStr) {
             scriptType = address.scriptType

@@ -229,35 +229,29 @@ public class BitcoinCoreBuilder {
 
         let transactionDataSorterFactory = TransactionDataSorterFactory()
 
-        var dustCalculator: DustCalculator?
-        var transactionSizeCalculator: TransactionSizeCalculator?
-        var transactionFeeCalculator: TransactionFeeCalculator?
-        var transactionSender: TransactionSender?
-        var transactionCreator: TransactionCreator?
-
+        var transactionSigner: TransactionSigner?
+        
         if let hdWallet = hdWallet {
             let ecdsaInputSigner = EcdsaInputSigner(hdWallet: hdWallet, network: network)
             let schnorrInputSigner = SchnorrInputSigner(hdWallet: hdWallet)
-            let transactionSizeCalculatorInstance = TransactionSizeCalculator()
-            let dustCalculatorInstance = DustCalculator(dustRelayTxFee: network.dustRelayTxFee, sizeCalculator: transactionSizeCalculatorInstance)
-            let recipientSetter = RecipientSetter(addressConverter: addressConverter, pluginManager: pluginManager)
-            let outputSetter = OutputSetter(outputSorterFactory: transactionDataSorterFactory, factory: factory)
-            let inputSetter = InputSetter(unspentOutputSelector: unspentOutputSelector, transactionSizeCalculator: transactionSizeCalculatorInstance, addressConverter: addressConverter, publicKeyManager: publicKeyManager, factory: factory, pluginManager: pluginManager, dustCalculator: dustCalculatorInstance, changeScriptType: purpose.scriptType, inputSorterFactory: transactionDataSorterFactory)
-            let lockTimeSetter = LockTimeSetter(storage: storage)
-            let transactionSigner = TransactionSigner(ecdsaInputSigner: ecdsaInputSigner, schnorrInputSigner: schnorrInputSigner)
-            let transactionBuilder = TransactionBuilder(recipientSetter: recipientSetter, inputSetter: inputSetter, lockTimeSetter: lockTimeSetter, outputSetter: outputSetter, signer: transactionSigner)
-            transactionFeeCalculator = TransactionFeeCalculator(recipientSetter: recipientSetter, inputSetter: inputSetter, addressConverter: addressConverter, publicKeyManager: publicKeyManager, changeScriptType: purpose.scriptType)
-            let transactionSendTimer = TransactionSendTimer(interval: 60)
-            let transactionSenderInstance = TransactionSender(transactionSyncer: transactionSyncer, initialBlockDownload: initialBlockDownload, peerManager: peerManager, storage: storage, timer: transactionSendTimer, logger: logger)
-
-            dustCalculator = dustCalculatorInstance
-            transactionSizeCalculator = transactionSizeCalculatorInstance
-            transactionSender = transactionSenderInstance
-
-            transactionSendTimer.delegate = transactionSender
-
-            transactionCreator = TransactionCreator(transactionBuilder: transactionBuilder, transactionProcessor: pendingTransactionProcessor, transactionSender: transactionSenderInstance, bloomFilterManager: bloomFilterManager)
+            transactionSigner = TransactionSigner(ecdsaInputSigner: ecdsaInputSigner, schnorrInputSigner: schnorrInputSigner)
         }
+        let transactionSizeCalculator = TransactionSizeCalculator()
+        let dustCalculator = DustCalculator(dustRelayTxFee: network.dustRelayTxFee, sizeCalculator: transactionSizeCalculator)
+        let recipientSetter = RecipientSetter(addressConverter: addressConverter, pluginManager: pluginManager)
+        let outputSetter = OutputSetter(outputSorterFactory: transactionDataSorterFactory, factory: factory)
+        let inputSetter = InputSetter(unspentOutputSelector: unspentOutputSelector, transactionSizeCalculator: transactionSizeCalculator, addressConverter: addressConverter, publicKeyManager: publicKeyManager, factory: factory, pluginManager: pluginManager, dustCalculator: dustCalculator, changeScriptType: purpose.scriptType, inputSorterFactory: transactionDataSorterFactory)
+        let lockTimeSetter = LockTimeSetter(storage: storage)
+        let transactionBuilder = TransactionBuilder(recipientSetter: recipientSetter, inputSetter: inputSetter, lockTimeSetter: lockTimeSetter, outputSetter: outputSetter, signer: transactionSigner)
+        let transactionFeeCalculator = TransactionFeeCalculator(recipientSetter: recipientSetter, inputSetter: inputSetter, addressConverter: addressConverter, publicKeyManager: publicKeyManager, changeScriptType: purpose.scriptType)
+        let transactionSendTimer = TransactionSendTimer(interval: 60)
+        let transactionSender = TransactionSender(transactionSyncer: transactionSyncer, initialBlockDownload: initialBlockDownload, peerManager: peerManager, storage: storage, timer: transactionSendTimer, logger: logger)
+
+
+        transactionSendTimer.delegate = transactionSender
+
+        let transactionCreator = TransactionCreator(transactionBuilder: transactionBuilder)
+
         let mempoolTransactions = MempoolTransactions(transactionSyncer: transactionSyncer, transactionSender: transactionSender)
 
         let syncManager = SyncManager(reachabilityManager: reachabilityManager, initialSyncer: initialSyncer, peerGroup: peerGroup, apiSyncStateManager: stateManager, bestBlockHeight: blockSyncer.localDownloadedBestBlockHeight)
@@ -275,6 +269,9 @@ public class BitcoinCoreBuilder {
                 transactionCreator: transactionCreator,
                 transactionFeeCalculator: transactionFeeCalculator,
                 dustCalculator: dustCalculator,
+                transactionSender: transactionSender,
+                transactionProcessor: pendingTransactionProcessor,
+                bloomFilterManager: bloomFilterManager,
                 paymentAddressParser: paymentAddressParser,
                 networkMessageParser: networkMessageParser,
                 networkMessageSerializer: networkMessageSerializer,
@@ -282,7 +279,9 @@ public class BitcoinCoreBuilder {
                 pluginManager: pluginManager,
                 watchedTransactionManager: watchedTransactionManager,
                 purpose: purpose,
-                peerManager: peerManager)
+                peerManager: peerManager,
+                watchAccount: transactionSigner == nil
+        )
 
         initialSyncer.delegate = syncManager
         blockSyncer.listener = syncManager
@@ -304,11 +303,10 @@ public class BitcoinCoreBuilder {
         peerGroup.inventoryItemsHandler = bitcoinCore.inventoryItemsHandlerChain
 
         bitcoinCore.prepend(addressConverter: Base58AddressConverter(addressVersion: network.pubKeyHash, addressScriptVersion: network.scriptHash))
-        if let dustCalculator = dustCalculator, let transactionSizeCalculator = transactionSizeCalculator {
-            bitcoinCore.prepend(unspentOutputSelector: UnspentOutputSelector(calculator: transactionSizeCalculator, provider: unspentOutputProvider, dustCalculator: dustCalculator))
-            bitcoinCore.prepend(unspentOutputSelector: UnspentOutputSelectorSingleNoChange(calculator: transactionSizeCalculator, provider: unspentOutputProvider, dustCalculator: dustCalculator))
-            // this part can be moved to another place
-        }
+
+        bitcoinCore.prepend(unspentOutputSelector: UnspentOutputSelector(calculator: transactionSizeCalculator, provider: unspentOutputProvider, dustCalculator: dustCalculator))
+        bitcoinCore.prepend(unspentOutputSelector: UnspentOutputSelectorSingleNoChange(calculator: transactionSizeCalculator, provider: unspentOutputProvider, dustCalculator: dustCalculator))
+        // this part can be moved to another place
 
         let blockHeaderParser = BlockHeaderParser(hasher: blockHeaderHasher ?? doubleShaHasher)
         bitcoinCore.add(messageParser: AddressMessageParser())
@@ -340,11 +338,10 @@ public class BitcoinCoreBuilder {
         bitcoinCore.add(peerTaskHandler: initialBlockDownload)
         bitcoinCore.add(inventoryItemsHandler: initialBlockDownload)
 
-        transactionSender?.subscribeTo(publisher: initialBlockDownload.publisher)
+        transactionSender.subscribeTo(publisher: initialBlockDownload.publisher)
 
-        if let transactionSender = transactionSender {
-            bitcoinCore.add(peerTaskHandler: transactionSender)
-        }
+        bitcoinCore.add(peerTaskHandler: transactionSender)
+        
         bitcoinCore.add(peerTaskHandler: mempoolTransactions)
         bitcoinCore.add(inventoryItemsHandler: mempoolTransactions)
 
