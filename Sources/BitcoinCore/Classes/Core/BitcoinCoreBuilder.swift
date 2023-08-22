@@ -21,6 +21,7 @@ public class BitcoinCoreBuilder {
     private var blockHeaderHasher: IHasher?
     private var blockValidator: IBlockValidator?
     private var transactionInfoConverter: ITransactionInfoConverter?
+    private var watchOnlyTransactionSigner: TransactionSigner?
 
     // parameters with default values
     private var confirmationsThreshold = 6
@@ -96,6 +97,11 @@ public class BitcoinCoreBuilder {
 
     public func set(initialSyncApi: ISyncTransactionApi?) -> BitcoinCoreBuilder {
         self.initialSyncApi = initialSyncApi
+        return self
+    }
+    
+    public func set(watchOnlyTransactionSigner: TransactionSigner?) -> BitcoinCoreBuilder {
+        self.watchOnlyTransactionSigner = watchOnlyTransactionSigner
         return self
     }
 
@@ -231,10 +237,12 @@ public class BitcoinCoreBuilder {
 
         var transactionSigner: TransactionSigner?
         
-        if let hdWallet = hdWallet {
+        if let hdWallet {
             let ecdsaInputSigner = EcdsaInputSigner(hdWallet: hdWallet, network: network)
             let schnorrInputSigner = SchnorrInputSigner(hdWallet: hdWallet)
             transactionSigner = TransactionSigner(ecdsaInputSigner: ecdsaInputSigner, schnorrInputSigner: schnorrInputSigner)
+        } else if let watchOnlyTransactionSigner {
+            transactionSigner = watchOnlyTransactionSigner
         }
         let transactionSizeCalculator = TransactionSizeCalculator()
         let dustCalculator = DustCalculator(dustRelayTxFee: network.dustRelayTxFee, sizeCalculator: transactionSizeCalculator)
@@ -255,6 +263,9 @@ public class BitcoinCoreBuilder {
         let mempoolTransactions = MempoolTransactions(transactionSyncer: transactionSyncer, transactionSender: transactionSender)
 
         let syncManager = SyncManager(reachabilityManager: reachabilityManager, initialSyncer: initialSyncer, peerGroup: peerGroup, apiSyncStateManager: stateManager, bestBlockHeight: blockSyncer.localDownloadedBestBlockHeight)
+
+        // Either we have signer from outside (which SHOULD be for watch only mode) or we dont have signer at all
+        let watchAccount = watchOnlyTransactionSigner != nil || transactionSigner == nil
 
         let bitcoinCore = BitcoinCore(storage: storage,
                 dataProvider: dataProvider,
@@ -280,7 +291,7 @@ public class BitcoinCoreBuilder {
                 watchedTransactionManager: watchedTransactionManager,
                 purpose: purpose,
                 peerManager: peerManager,
-                watchAccount: transactionSigner == nil
+                watchAccount: watchAccount
         )
 
         initialSyncer.delegate = syncManager

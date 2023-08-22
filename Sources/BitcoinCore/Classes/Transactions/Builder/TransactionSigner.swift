@@ -1,8 +1,6 @@
 import Foundation
 
-public typealias SigningBlock = (Data) -> Data
-
-class TransactionSigner {
+public class TransactionSigner {
     enum SignError: Error {
         case notSupportedScriptType
         case noRedeemScript
@@ -11,7 +9,7 @@ class TransactionSigner {
     private let ecdsaInputSigner: IInputSigner
     private let schnorrInputSigner: IInputSigner
 
-    init(ecdsaInputSigner: IInputSigner, schnorrInputSigner: IInputSigner) {
+    public init(ecdsaInputSigner: IInputSigner, schnorrInputSigner: IInputSigner) {
         self.ecdsaInputSigner = ecdsaInputSigner
         self.schnorrInputSigner = schnorrInputSigner
     }
@@ -22,19 +20,7 @@ class TransactionSigner {
         }
     }
     
-    private func ecdsaSign(index: Int, mutableTransaction: MutableTransaction, signingBlock: SigningBlock) throws {
-        let inputToSign = mutableTransaction.inputsToSign[index]
-        let previousOutput = inputToSign.previousOutput
-        var sigScriptData = try ecdsaInputSigner.prepareDataForSigning(
-            mutableTransaction: mutableTransaction,
-            index: index
-        )
-
-        let signedData = signingBlock(sigScriptData.removeFirst())
-
-        try processEcdsaSign(index: index, mutableTransaction: mutableTransaction, signature: [signedData] + sigScriptData)
-    }
-
+    // MARK: - ECDSA Signature
     private func ecdsaSign(index: Int, mutableTransaction: MutableTransaction) throws {
         let inputToSign = mutableTransaction.inputsToSign[index]
         let previousOutput = inputToSign.previousOutput
@@ -79,25 +65,7 @@ class TransactionSigner {
         }
     }
 
-    private func schnorrSign(index: Int, mutableTransaction: MutableTransaction, signingBlock: SigningBlock) throws {
-        let inputToSign = mutableTransaction.inputsToSign[index]
-        let previousOutput = inputToSign.previousOutput
-
-        guard previousOutput.scriptType == .p2tr else {
-            throw SignError.notSupportedScriptType
-        }
-
-        var witnessData = try schnorrInputSigner.prepareDataForSigning(
-            mutableTransaction: mutableTransaction,
-            index: index
-        )
-        
-        let signedData = signingBlock(witnessData.removeFirst())
-
-        mutableTransaction.transaction.segWit = true
-        inputToSign.input.witnessData = [signedData]
-    }
-
+    // MARK: - SCHNORR Signature
     private func schnorrSign(index: Int, mutableTransaction: MutableTransaction) throws {
         let inputToSign = mutableTransaction.inputsToSign[index]
         let previousOutput = inputToSign.previousOutput
@@ -118,22 +86,12 @@ class TransactionSigner {
 
 extension TransactionSigner: ITransactionSigner {
 
-    func sign(mutableTransaction: MutableTransaction) throws {
+    public func sign(mutableTransaction: MutableTransaction) throws {
         for (index, inputToSign) in mutableTransaction.inputsToSign.enumerated() {
             if inputToSign.previousOutput.scriptType == .p2tr {
                 try schnorrSign(index: index, mutableTransaction: mutableTransaction)
             } else {
                 try ecdsaSign(index: index, mutableTransaction: mutableTransaction)
-            }
-        }
-    }
-
-    func sign(mutableTransaction: MutableTransaction, signingBlock: SigningBlock) throws {
-        for (index, inputToSign) in mutableTransaction.inputsToSign.enumerated() {
-            if inputToSign.previousOutput.scriptType == .p2tr {
-                try schnorrSign(index: index, mutableTransaction: mutableTransaction, signingBlock: signingBlock)
-            } else {
-                try ecdsaSign(index: index, mutableTransaction: mutableTransaction, signingBlock: signingBlock)
             }
         }
     }

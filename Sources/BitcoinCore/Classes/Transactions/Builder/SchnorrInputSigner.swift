@@ -20,21 +20,6 @@ class SchnorrInputSigner {
 
 extension SchnorrInputSigner: IInputSigner {
     
-    func prepareDataForSigning(mutableTransaction: MutableTransaction, index: Int) throws -> [Data] {
-        let input = mutableTransaction.inputsToSign[index]
-        let pubKey = input.previousOutputPublicKey
-        
-        let serializedTransaction = try TransactionSerializer.serializedForTaprootSignature(
-            transaction: mutableTransaction.transaction,
-            inputsToSign: mutableTransaction.inputsToSign,
-            outputs: mutableTransaction.outputs,
-            inputIndex: index
-        )
-
-        let signatureHash = try SchnorrHelper.hashTweak(data: serializedTransaction, tag: "TapSighash")
-        return [signatureHash]
-    }
-    
     func sigScriptData(transaction: Transaction, inputsToSign: [InputToSign], outputs: [Output], index: Int) throws -> [Data] {
         let input = inputsToSign[index]
         let pubKey = input.previousOutputPublicKey

@@ -402,8 +402,7 @@ public protocol IBlockchainDataListener: AnyObject {
 }
 
 
-protocol IInputSigner {
-    func prepareDataForSigning(mutableTransaction: MutableTransaction, index: Int) throws -> [Data]
+public protocol IInputSigner {
     func sigScriptData(mutableTransaction: MutableTransaction, index: Int) throws -> [Data]
 }
 

@@ -22,30 +22,6 @@ class EcdsaInputSigner {
 
 extension EcdsaInputSigner: IInputSigner {
     
-    func prepareDataForSigning(mutableTransaction: MutableTransaction, index: Int) throws -> [Data] {
-        let input = mutableTransaction.inputsToSign[index]
-        let previousOutput = input.previousOutput
-        let pubKey = input.previousOutputPublicKey
-        
-        let witness = previousOutput.scriptType == .p2wpkh || previousOutput.scriptType == .p2wpkhSh
-        
-        var serializedTransaction = try TransactionSerializer.serializedForSignature(
-            transaction: mutableTransaction.transaction,
-            inputsToSign: mutableTransaction.inputsToSign,
-            outputs: mutableTransaction.outputs,
-            inputIndex: index,
-            forked: witness || network.sigHash.forked
-        )
-        serializedTransaction += UInt32(network.sigHash.value)
-        let signatureHash = Crypto.doubleSha256(serializedTransaction)
-        let network = Data([network.sigHash.value])
-        
-        switch previousOutput.scriptType {
-        case .p2pk: return [signatureHash, network]
-        default: return [signatureHash, network, pubKey.raw]
-        }
-    }
-    
     func sigScriptData(transaction: Transaction, inputsToSign: [InputToSign], outputs: [Output], index: Int) throws -> [Data] {
         let input = inputsToSign[index]
         let previousOutput = input.previousOutput
