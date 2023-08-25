@@ -237,12 +237,12 @@ public class BitcoinCoreBuilder {
 
         var transactionSigner: TransactionSigner?
         
-        if let hdWallet {
+        if let watchOnlyTransactionSigner {
+            transactionSigner = watchOnlyTransactionSigner
+        } else if let hdWallet {
             let ecdsaInputSigner = EcdsaInputSigner(hdWallet: hdWallet, network: network)
             let schnorrInputSigner = SchnorrInputSigner(hdWallet: hdWallet)
             transactionSigner = TransactionSigner(ecdsaInputSigner: ecdsaInputSigner, schnorrInputSigner: schnorrInputSigner)
-        } else if let watchOnlyTransactionSigner {
-            transactionSigner = watchOnlyTransactionSigner
         }
         let transactionSizeCalculator = TransactionSizeCalculator()
         let dustCalculator = DustCalculator(dustRelayTxFee: network.dustRelayTxFee, sizeCalculator: transactionSizeCalculator)
